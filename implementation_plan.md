@@ -380,6 +380,8 @@ fluxcast/
 
 ### Etapa 4 — App Android Nativa (Kotlin + Jetpack Compose) _(Semanas 7–8)_
 
+**Estado:** implementada y verificada localmente (Jetpack Compose Material You, UniFFI `.so` + JNA, `KeystoreManager` + `BiometricPrompt`, CameraX + ML Kit QR, OkHttp WebSocket + WorkManager delta sync, `ShareReceiverActivity`, `SendClipboardTileService` y `FluxCastGlanceWidget`).
+
 - **Tareas:**
     1. Configurar el proyecto Android con Jetpack Compose (Material You), Hilt, Room DB y la librería `.so` generada por UniFFI (`fluxcast-uniffi`).
     2. Implementar **Android Keystore + `BiometricPrompt`** y escáner QR (**CameraX + ML Kit**) para vincular con Fedora en un paso.

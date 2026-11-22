@@ -1,3 +1,6 @@
 <resources>
     <string name="app_name">FluxCast</string>
+    <string name="share_to_fedora">Enviar a Fedora (FluxCast)</string>
+    <string name="tile_send_clipboard">Enviar a Fedora</string>
+    <string name="widget_name">FluxCast · Portapapeles y Snippets</string>
 </resources>

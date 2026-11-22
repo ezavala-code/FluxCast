@@ -6,6 +6,18 @@ Monorepo de desarrollo para Fedora KDE Plasma 6 (Wayland) y Android nativo. El [
 - **Etapa 1:** launcher nativo en Fedora KDE Plasma con búsqueda difusa (`nucleo-matcher`), indexador de apps `.desktop` + Flatpak, repositorios Git (Dolphin, VS Code, Konsole, Neovim), utilidades offline (`=`, `b64`/`unb64`, `hex`/`bin`/`dec`, `ts`, `uuid4`/`uuid7`, `jwt`), acciones rápidas de Plasma, atajo global nativo vía `org.freedesktop.portal.GlobalShortcuts` (`Alt+Space`) y respaldo instantáneo por UNIX socket (`fluxcast toggle`).
 - **Etapa 2:** daemon de portapapeles Wayland sobre `ext-data-control-v1` (KWin) con fallback a `zwlr_data_control_manager_v1`, filtrado estricto de contraseñas (`x-kde-passwordManagerHint=secret`), modo pausa/incógnito (5 min, 15 min o manual), historial persistente en SQLite + FTS5 con clasificador automático (`JSON`, `URL`, `código`, `color HEX/RGB`, `JWT`, texto), fijado (`Pin`), pegado limpio (`Shift+Enter`) y bóveda de snippets con etiquetas, alias (`!dprune`, `!klog`), plantillas (`{{clipboard}}`, `{{date}}`, `{{uuid}}`) y ranking por frecuencia.
 - **Etapa 3:** criptografía E2EE Zero-Knowledge compartida en Rust (`crates/fluxcast-crypto`: `Argon2id` + `XChaCha20-Poly1305` + `HMAC-SHA256`), bindings nativos Android con `crates/fluxcast-uniffi` y `scripts/build-android-rust.sh` (alineación ELF de 16 KB + generación Kotlin con `uniffi-bindgen`), Sync Relay Server (`apps/sync-server`: Axum + WebSockets + PostgreSQL 16 + `docker-compose.yml`, JWT y tokens QR efímeros de 120 s) e integración en Fedora KDE con `ksecretd`/KWallet (`oo7`) y panel de emparejamiento QR (`Ctrl+7`).
+- **Etapa 4:** app Android nativa en Kotlin + Jetpack Compose (Material You) conectada al núcleo Rust vía UniFFI (`libfluxcast_uniffi.so`), con almacenamiento de llave maestra en Android Keystore + `BiometricPrompt`, escáner QR con CameraX + ML Kit, sincronización en tiempo real por WebSockets (OkHttp) + delta sync offline con WorkManager, pantallas de Clipboard Feed, Snippets Offline, Enviar a Fedora y Ajustes, además de **Android Share Sheet (`ACTION_SEND`)**, **Quick Settings Tile** y **Glance Home Screen Widget**.
+
+## Ejecución local y prueba integral con un solo script
+
+- **Probar todo el proyecto (Etapas 0 a 4) con un solo comando:**
+  ```sh
+  ./scripts/verify-all.sh
+  ```
+- **Ejecutar en local en tu sesión de Fedora KDE (levanta `fluxcast-sync-server` en `127.0.0.1:8787` + el launcher `fluxcast`):**
+  ```sh
+  ./scripts/run-local.sh
+  ```
 
 ## Preparar Fedora KDE
 
