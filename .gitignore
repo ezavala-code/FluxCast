@@ -1,0 +1,10 @@
+/target/
+node_modules/
+dist/
+.gradle/
+.kotlin/
+build/
+local.properties
+.idea/
+apps/desktop/src-tauri/gen/
+/.cargo/config.toml
