@@ -6,3 +6,18 @@ license.workspace = true
 
 [lib]
 crate-type = ["cdylib", "rlib"]
+
+[features]
+cli = ["uniffi/cli"]
+
+[dependencies]
+fluxcast-crypto = { path = "../fluxcast-crypto" }
+fluxcast-protocol = { path = "../fluxcast-protocol" }
+serde_json = "1"
+uniffi = { version = "0.32", default-features = false }
+uuid = { version = "1", features = ["v4", "v7"] }
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["cli"]

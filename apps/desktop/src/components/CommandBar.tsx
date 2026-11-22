@@ -3,9 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { AppWindow, ArrowDown, ArrowUp, Braces, Command, CornerDownLeft, FolderGit2, Power, Search, X, Zap } from "lucide-react";
 import { ClipboardView } from "./ClipboardView";
+import { PairingModal } from "./PairingModal";
 import { SnippetsView } from "./SnippetsView";
 
-type Scope = "all" | "app" | "project" | "tools" | "clipboard" | "snippets";
+type Scope = "all" | "app" | "project" | "tools" | "clipboard" | "snippets" | "sync";
 type Hit = { id: number; name: string; detail: string; kind: "app" | "project" | "action" | "snippet"; snippet_id?: string };
 type Results = { hits: Hit[]; utility: { label: string; value: string } | null; problem: string | null };
 type Row = Hit | { kind: "example" | "value"; name: string; detail: string };
@@ -16,6 +17,7 @@ const scopes: [Scope, string][] = [
   ["tools", "Utilidades"],
   ["clipboard", "Portapapeles"],
   ["snippets", "Snippets"],
+  ["sync", "Sync E2EE"],
 ];
 const openers = [["dolphin", "Dolphin"], ["code", "VS Code"], ["konsole", "Konsole"], ["neovim", "Neovim"]];
 const examples = [
@@ -41,7 +43,7 @@ export function CommandBar() {
   const input = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const busy = useRef(false);
-  const isLauncherScope = scope !== "clipboard" && scope !== "snippets";
+  const isLauncherScope = scope !== "clipboard" && scope !== "snippets" && scope !== "sync";
   const data = isLauncherScope && response?.query === query && response.scope === scope && response.version === catalogVersion ? response.data : null;
 
   useEffect(() => {
@@ -157,6 +159,9 @@ export function CommandBar() {
       }
       return;
     }
+    if (scope === "sync") {
+      return;
+    }
     if (event.altKey && current?.kind === "project" && openers[number]) {
       event.preventDefault(); void activate(current, openers[number][0]); return;
     }
@@ -215,6 +220,8 @@ export function CommandBar() {
           onError={setError}
           actionTrigger={snipAction}
         />
+      ) : scope === "sync" ? (
+        <PairingModal onError={setError} />
       ) : (
         <>
           <div id="results" role="listbox" aria-label="Resultados" className="list" ref={list}>

@@ -1,0 +1,7 @@
+[bindings.kotlin]
+package_name = "dev.fluxcast.core"
+cdylib_name = "fluxcast_uniffi"
+
+[crates.fluxcast_uniffi.bindings.kotlin]
+package_name = "dev.fluxcast.core"
+cdylib_name = "fluxcast_uniffi"

@@ -1,8 +1,10 @@
 mod client;
 mod clipboard;
 mod ipc_socket;
+mod keyring;
 mod launcher;
 mod shortcuts;
+mod sync_worker;
 
 use gtk::prelude::GtkWindowExt;
 use launcher::Launcher;
@@ -68,7 +70,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             launcher::list_snippets,
             launcher::save_snippet,
             launcher::use_snippet,
-            launcher::delete_snippet
+            launcher::delete_snippet,
+            launcher::sync_status,
+            launcher::set_sync_server_url,
+            launcher::rotate_sync_passphrase,
+            launcher::sync_now,
+            launcher::generate_pairing_qr,
+            launcher::list_synced_devices
         ])
         .setup(move |app| {
             launcher::warm_catalog(app.handle().clone());
@@ -78,6 +86,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     app.handle().clone(),
                     Arc::clone(&state.store),
                     Arc::clone(&state.pause),
+                );
+                sync_worker::spawn_realtime_listener(
+                    app.handle().clone(),
+                    Arc::clone(&state.store),
+                    Arc::clone(&state.sync),
                 );
             }
             let handle = app.handle().clone();

@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: fluxcast
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fluxcast_local_pw}
+      POSTGRES_DB: fluxcast
+    ports:
+      - "5432:5432"
+    volumes:
+      - fluxcast_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fluxcast -d fluxcast"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  sync-server:
+    build:
+      context: .
+      dockerfile: apps/sync-server/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://fluxcast:${POSTGRES_PASSWORD:-fluxcast_local_pw}@postgres:5432/fluxcast
+      FLUXCAST_BIND: 0.0.0.0:8787
+      FLUXCAST_JWT_SECRET: ${FLUXCAST_JWT_SECRET:-fluxcast-self-hosted-jwt-secret}
+    ports:
+      - "8787:8787"
+
+volumes:
+  fluxcast_pgdata:

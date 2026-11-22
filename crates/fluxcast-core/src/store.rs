@@ -115,6 +115,39 @@ pub struct SnippetInput {
     pub tags: Vec<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct OutboxEntry {
+    pub entity_id: String,
+    pub entity_kind: i16,
+    pub hlc_timestamp: String,
+    pub is_deleted: bool,
+    pub payload_json: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct ClipboardSyncPayload {
+    content_type: String,
+    content: String,
+    preview: String,
+    dedup_hmac: String,
+    source_device_id: String,
+    is_pinned: bool,
+    created_at: i64,
+    updated_at: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct SnippetSyncPayload {
+    title: String,
+    keyword: Option<String>,
+    body: String,
+    language: String,
+    tags: Vec<String>,
+    use_count: i64,
+    created_at: i64,
+    updated_at: i64,
+}
+
 pub struct Store {
     conn: Mutex<Connection>,
     device_id: String,
@@ -705,6 +738,223 @@ impl Store {
             .query_row("SELECT COUNT(*) FROM sync_outbox", [], |row| row.get(0))
             .map_err(|e| e.to_string())?;
         Ok(count as usize)
+    }
+
+    pub fn pending_outbox_entries(&self) -> Result<Vec<OutboxEntry>, String> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT entity_id, entity_kind FROM sync_outbox ORDER BY queued_at ASC LIMIT 200",
+            )
+            .map_err(|e| e.to_string())?;
+        let pairs: Vec<(String, i16)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+
+        let mut entries = Vec::new();
+        for (entity_id, entity_kind) in pairs {
+            if entity_kind == 1 {
+                let row = conn
+                    .query_row(
+                        "SELECT content_type, content, preview, dedup_hmac, source_device_id,
+                                is_pinned, hlc_timestamp, created_at, updated_at, deleted_at
+                         FROM clipboard_items WHERE id = ?1",
+                        params![entity_id],
+                        |r| {
+                            Ok((
+                                ClipboardSyncPayload {
+                                    content_type: r.get(0)?,
+                                    content: r.get(1)?,
+                                    preview: r.get(2)?,
+                                    dedup_hmac: r.get(3)?,
+                                    source_device_id: r.get(4)?,
+                                    is_pinned: r.get::<_, i64>(5)? != 0,
+                                    created_at: r.get(7)?,
+                                    updated_at: r.get(8)?,
+                                },
+                                r.get::<_, String>(6)?,
+                                r.get::<_, Option<i64>>(9)?.is_some(),
+                            ))
+                        },
+                    )
+                    .optional()
+                    .map_err(|e| e.to_string())?;
+                if let Some((payload, hlc_timestamp, is_deleted)) = row {
+                    entries.push(OutboxEntry {
+                        entity_id,
+                        entity_kind,
+                        hlc_timestamp,
+                        is_deleted,
+                        payload_json: serde_json::to_string(&payload).map_err(|e| e.to_string())?,
+                    });
+                }
+            } else if entity_kind == 2 {
+                let row = conn
+                    .query_row(
+                        "SELECT title, keyword, body, language, tags_json, use_count,
+                                hlc_timestamp, created_at, updated_at, deleted_at
+                         FROM snippets WHERE id = ?1",
+                        params![entity_id],
+                        |r| {
+                            let tags_raw: String = r.get(4)?;
+                            let tags: Vec<String> =
+                                serde_json::from_str(&tags_raw).unwrap_or_default();
+                            Ok((
+                                SnippetSyncPayload {
+                                    title: r.get(0)?,
+                                    keyword: r.get(1)?,
+                                    body: r.get(2)?,
+                                    language: r.get(3)?,
+                                    tags,
+                                    use_count: r.get(5)?,
+                                    created_at: r.get(7)?,
+                                    updated_at: r.get(8)?,
+                                },
+                                r.get::<_, String>(6)?,
+                                r.get::<_, Option<i64>>(9)?.is_some(),
+                            ))
+                        },
+                    )
+                    .optional()
+                    .map_err(|e| e.to_string())?;
+                if let Some((payload, hlc_timestamp, is_deleted)) = row {
+                    entries.push(OutboxEntry {
+                        entity_id,
+                        entity_kind,
+                        hlc_timestamp,
+                        is_deleted,
+                        payload_json: serde_json::to_string(&payload).map_err(|e| e.to_string())?,
+                    });
+                }
+            }
+        }
+        Ok(entries)
+    }
+
+    pub fn acknowledge_outbox(&self, entity_ids: &[String]) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        for id in entity_ids {
+            conn.execute("DELETE FROM sync_outbox WHERE entity_id = ?1", params![id])
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// Aplica una entidad remota descifrada usando resolución Last-Write-Wins sobre `hlc_timestamp`.
+    pub fn apply_remote_entity(
+        &self,
+        entity_id: &str,
+        entity_kind: i16,
+        hlc_timestamp: &str,
+        is_deleted: bool,
+        payload_json: &str,
+    ) -> Result<bool, String> {
+        let conn = self.conn.lock().unwrap();
+        let now = unix_ms();
+        if entity_kind == 1 {
+            let local_hlc: Option<String> = conn
+                .query_row(
+                    "SELECT hlc_timestamp FROM clipboard_items WHERE id = ?1",
+                    params![entity_id],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?;
+            if local_hlc
+                .as_deref()
+                .is_some_and(|curr| hlc_timestamp <= curr)
+            {
+                return Ok(false);
+            }
+            let payload: ClipboardSyncPayload =
+                serde_json::from_str(payload_json).map_err(|e| e.to_string())?;
+            let deleted_at = is_deleted.then_some(now);
+            conn.execute(
+                "INSERT INTO clipboard_items (
+                    id, content_type, content, preview, dedup_hmac, source_device_id,
+                    is_pinned, hlc_timestamp, created_at, updated_at, deleted_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                 ON CONFLICT(id) DO UPDATE SET
+                    content_type = excluded.content_type,
+                    content = excluded.content,
+                    preview = excluded.preview,
+                    dedup_hmac = excluded.dedup_hmac,
+                    source_device_id = excluded.source_device_id,
+                    is_pinned = excluded.is_pinned,
+                    hlc_timestamp = excluded.hlc_timestamp,
+                    updated_at = excluded.updated_at,
+                    deleted_at = excluded.deleted_at",
+                params![
+                    entity_id,
+                    payload.content_type,
+                    payload.content,
+                    payload.preview,
+                    payload.dedup_hmac,
+                    payload.source_device_id,
+                    i64::from(payload.is_pinned),
+                    hlc_timestamp,
+                    payload.created_at,
+                    payload.updated_at,
+                    deleted_at,
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            return Ok(true);
+        } else if entity_kind == 2 {
+            let local_hlc: Option<String> = conn
+                .query_row(
+                    "SELECT hlc_timestamp FROM snippets WHERE id = ?1",
+                    params![entity_id],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?;
+            if local_hlc
+                .as_deref()
+                .is_some_and(|curr| hlc_timestamp <= curr)
+            {
+                return Ok(false);
+            }
+            let payload: SnippetSyncPayload =
+                serde_json::from_str(payload_json).map_err(|e| e.to_string())?;
+            let tags_json = serde_json::to_string(&payload.tags).map_err(|e| e.to_string())?;
+            let deleted_at = is_deleted.then_some(now);
+            let keyword = if is_deleted { None } else { payload.keyword };
+            conn.execute(
+                "INSERT INTO snippets (
+                    id, title, keyword, body, language, tags_json,
+                    use_count, hlc_timestamp, created_at, updated_at, deleted_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                 ON CONFLICT(id) DO UPDATE SET
+                    title = excluded.title,
+                    keyword = excluded.keyword,
+                    body = excluded.body,
+                    language = excluded.language,
+                    tags_json = excluded.tags_json,
+                    use_count = excluded.use_count,
+                    hlc_timestamp = excluded.hlc_timestamp,
+                    updated_at = excluded.updated_at,
+                    deleted_at = excluded.deleted_at",
+                params![
+                    entity_id,
+                    payload.title,
+                    keyword,
+                    payload.body,
+                    payload.language,
+                    tags_json,
+                    payload.use_count,
+                    hlc_timestamp,
+                    payload.created_at,
+                    payload.updated_at,
+                    deleted_at,
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            return Ok(true);
+        }
+        Ok(false)
     }
 }
 

@@ -1,4 +1,7 @@
-use crate::clipboard::{PauseController, PauseStatus};
+use crate::{
+    clipboard::{PauseController, PauseStatus},
+    sync_worker::{PairingQrView, SyncCycleReport, SyncStatus, SyncWorker},
+};
 use fluxcast_core::{
     catalog::{Catalog, Kind},
     classifier::plain_text,
@@ -6,6 +9,7 @@ use fluxcast_core::{
     store::{ClipboardItem, Snippet, SnippetInput, Store},
     utilities::{evaluate, Output},
 };
+use fluxcast_protocol::DeviceInfo;
 use gio::prelude::AppInfoExt;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -21,6 +25,7 @@ pub struct Launcher {
     pub shortcut: Mutex<String>,
     pub store: Arc<Store>,
     pub pause: Arc<PauseController>,
+    pub sync: Arc<SyncWorker>,
 }
 
 impl Default for Launcher {
@@ -35,6 +40,7 @@ impl Default for Launcher {
             shortcut: Mutex::new(String::new()),
             store: Arc::new(store),
             pause: Arc::new(PauseController::default()),
+            sync: Arc::new(SyncWorker::default()),
         }
     }
 }
@@ -505,6 +511,49 @@ pub fn use_snippet(
 #[tauri::command]
 pub fn delete_snippet(state: State<'_, Launcher>, id: String) -> Result<(), String> {
     state.store.delete_snippet(&id)
+}
+
+#[tauri::command]
+pub async fn sync_status(state: State<'_, Launcher>) -> Result<SyncStatus, String> {
+    state.sync.status(&state.store).await
+}
+
+#[tauri::command]
+pub async fn set_sync_server_url(
+    state: State<'_, Launcher>,
+    server_url: String,
+) -> Result<SyncStatus, String> {
+    let _ = state.sync.set_server_url(&server_url)?;
+    state.sync.status(&state.store).await
+}
+
+#[tauri::command]
+pub async fn rotate_sync_passphrase(
+    state: State<'_, Launcher>,
+    passphrase: String,
+) -> Result<SyncStatus, String> {
+    state
+        .sync
+        .rotate_passphrase(&state.store, &passphrase)
+        .await
+}
+
+#[tauri::command]
+pub async fn sync_now(
+    app: AppHandle,
+    state: State<'_, Launcher>,
+) -> Result<SyncCycleReport, String> {
+    state.sync.sync_now(&app, &state.store).await
+}
+
+#[tauri::command]
+pub async fn generate_pairing_qr(state: State<'_, Launcher>) -> Result<PairingQrView, String> {
+    state.sync.create_pairing_qr().await
+}
+
+#[tauri::command]
+pub async fn list_synced_devices(state: State<'_, Launcher>) -> Result<Vec<DeviceInfo>, String> {
+    state.sync.list_devices().await
 }
 
 #[cfg(test)]

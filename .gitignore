@@ -7,4 +7,5 @@ build/
 local.properties
 .idea/
 apps/desktop/src-tauri/gen/
+apps/android/app/src/main/jniLibs/
 /.cargo/config.toml

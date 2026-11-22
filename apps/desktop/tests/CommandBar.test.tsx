@@ -148,4 +148,39 @@ describe("CommandBar", () => {
     await waitFor(() => expect(ipc).toHaveBeenCalledWith("use_snippet", { id: "snip-1" }));
     expect(ipc).toHaveBeenCalledWith("hide_launcher");
   });
+
+  it("muestra el panel Sync E2EE con Ctrl+7, estado de KWallet y genera el QR de vinculación", async () => {
+    const user = userEvent.setup();
+    ipc.mockImplementation(async cmd => {
+      if (cmd === "sync_status") {
+        return {
+          server_url: "http://127.0.0.1:8787",
+          registered: true,
+          user_id: "u1",
+          device_id: "d1",
+          last_seq: 7,
+          pending_outbox: 2,
+          keyring_backend: "Plasma ksecretd / KWallet (oo7)",
+          key_fingerprint: "AbCdEf12",
+        };
+      }
+      if (cmd === "generate_pairing_qr") {
+        return {
+          qr_svg: "<svg></svg>",
+          payload_json: "{}",
+          pairing_token: "pair_test_120s",
+          expires_at: 9999999999,
+          server_url: "http://127.0.0.1:8787",
+        };
+      }
+      if (cmd === "search") return results;
+      return "";
+    });
+    render(<CommandBar/>);
+    await user.keyboard("{Control>}7{/Control}");
+    await screen.findByText(/Plasma ksecretd \/ KWallet/);
+    await user.click(screen.getByRole("button", { name: /Vincular Android por QR/ }));
+    await screen.findByText(/pair_test_120s/);
+    expect(ipc).toHaveBeenCalledWith("generate_pairing_qr");
+  });
 });

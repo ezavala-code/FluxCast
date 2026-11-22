@@ -369,6 +369,8 @@ fluxcast/
 
 ### Etapa 3 — Criptografía E2EE, UniFFI y Sync Relay Server _(Semanas 5–6)_
 
+**Estado:** implementada y verificada localmente (`fluxcast-crypto` Argon2id + XChaCha20-Poly1305 + HMAC-SHA256, `fluxcast-uniffi` con generación de `.so` Android 16 KB y bindings Kotlin, `apps/sync-server` Axum + WebSockets + PostgreSQL + Docker Compose, y `keyring.rs` / `sync_worker.rs` / `PairingModal.tsx` en Fedora KDE).
+
 - **Tareas:**
     1. Implementar `crates/fluxcast-crypto` (`Argon2id` + `XChaCha20-Poly1305` + `HMAC-SHA256`) y `crates/fluxcast-uniffi` con macros `#[uniffi::export]`.
     2. Configurar `scripts/build-android-rust.sh` usando `cargo-ndk` (con soporte de alineación de 16 KB) y `uniffi-bindgen` para generar bindings Kotlin probados.
