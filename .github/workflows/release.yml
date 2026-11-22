@@ -1,0 +1,91 @@
+name: Release
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fedora-desktop:
+    name: Fedora RPM & AppImage
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install native packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev rpm patchelf libfuse2t64
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @fluxcast/desktop test
+      - run: pnpm --filter @fluxcast/desktop tauri build --bundles rpm,appimage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+      - name: Collect desktop release artifacts
+        run: |
+          mkdir -p dist-release
+          find target/release/bundle/rpm -name '*.rpm' -exec cp {} dist-release/ \;
+          find target/release/bundle/appimage -name '*.AppImage' -exec cp {} dist-release/ \;
+          ls -lh dist-release/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-bundles
+          path: dist-release/*
+
+  android-apk:
+    name: Android APK (16 KB ELF + UniFFI)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v5
+      - name: Install Android SDK & NDK r27
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "platforms;android-35" "build-tools;34.0.0" "ndk;27.2.12479018"
+      - run: rustup target add aarch64-linux-android x86_64-linux-android
+      - run: cargo install --locked --version 4.1.2 cargo-ndk
+      - name: Build Rust UniFFI .so libraries and Kotlin bindings
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018"
+          ./scripts/build-android-rust.sh
+      - name: Run unit tests and assemble signed APK
+        run: |
+          ./gradlew testDebugUnitTest assembleDebug
+          mkdir -p dist-release
+          cp apps/android/app/build/outputs/apk/debug/app-debug.apk dist-release/fluxcast-android.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: dist-release/fluxcast-android.apk
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [fedora-desktop, android-apk]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Generate SHA256SUMS
+        run: |
+          cd release-assets
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release-assets/*

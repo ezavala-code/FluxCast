@@ -1,0 +1,19 @@
+[Unit]
+Description=FluxCast — Launcher y Daemon de Portapapeles E2EE para Fedora KDE Plasma (Wayland)
+Documentation=https://github.com/ezavala-code/FluxCast
+PartOf=graphical-session.target
+After=graphical-session.target plasma-workspace.target
+ConditionEnvironment=WAYLAND_DISPLAY
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/fluxcast-desktop
+ExecReload=%h/.local/bin/fluxcast toggle
+Restart=on-failure
+RestartSec=2
+Environment=GDK_BACKEND=wayland
+Environment=QT_QPA_PLATFORM=wayland
+MemoryMax=256M
+
+[Install]
+WantedBy=graphical-session.target

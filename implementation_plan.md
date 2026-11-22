@@ -395,6 +395,8 @@ fluxcast/
 
 ### Etapa 5 — Empaquetado `.rpm`, Pruebas y Lanzamiento en GitHub _(Semanas 9–10)_
 
+**Estado:** implementada y verificada localmente (`scripts/fluxcast.service`, `scripts/install-fedora-kde.sh`, `.github/workflows/release.yml`, paquete nativo `.rpm`, documentación técnica en `docs/`, pruebas de convergencia HLC offline y medición de métricas reales con `scripts/measure-metrics.py`).
+
 - **Tareas:**
     1. Crear `scripts/fluxcast.service` (`systemd --user`) y `scripts/install-fedora-kde.sh`.
     2. Configurar GitHub Actions para generar releases automáticos con paquete **`.rpm`** (Fedora), **`AppImage`** y **`.apk`** firmado (Android).

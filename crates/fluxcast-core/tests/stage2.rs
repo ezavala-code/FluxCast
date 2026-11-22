@@ -144,3 +144,66 @@ fn snippets_crud_templates_tags_and_frecency_ranking_work() {
     store.delete_snippet(&s1.id).unwrap();
     assert!(store.find_snippet_by_keyword("!dprune").unwrap().is_none());
 }
+
+#[test]
+fn offline_hlc_conflict_resolution_converges_deterministically_across_devices() {
+    let fedora = Store::open_in_memory().unwrap();
+    let android = Store::open_in_memory().unwrap();
+
+    // Fedora crea un snippet inicial y lo sincroniza hacia Android.
+    let initial = fedora
+        .save_snippet(SnippetInput {
+            id: None,
+            title: "Deploy Fedora".into(),
+            keyword: Some("!deploy".into()),
+            body: "ansible-playbook site.yml".into(),
+            language: Some("shell".into()),
+            tags: vec!["fedora".into()],
+        })
+        .unwrap();
+    let outbox = fedora.pending_outbox_entries().unwrap();
+    assert_eq!(outbox.len(), 1);
+    assert!(android
+        .apply_remote_entity(
+            &outbox[0].entity_id,
+            outbox[0].entity_kind,
+            &outbox[0].hlc_timestamp,
+            outbox[0].is_deleted,
+            &outbox[0].payload_json,
+        )
+        .unwrap());
+
+    // Mientras están desconectados, una actualización con HLC posterior debe ganar (LWW),
+    // y una actualización atrasada con HLC anterior debe ser rechazada en ambos nodos.
+    let newer_hlc = "999999999999999-0009-android";
+    let older_hlc = "000000000000001-0000-fedora";
+    let newer_payload = r#"{"title":"Deploy Fedora v2","keyword":"!deploy","body":"ansible-playbook site.yml --check","language":"shell","tags":["fedora","prod"],"use_count":5,"created_at":100,"updated_at":200}"#;
+    let older_payload = r#"{"title":"Versión Vieja","keyword":"!deploy","body":"old","language":"shell","tags":[],"use_count":1,"created_at":100,"updated_at":101}"#;
+
+    assert!(fedora
+        .apply_remote_entity(&initial.id, 2, newer_hlc, false, newer_payload)
+        .unwrap());
+    assert!(!fedora
+        .apply_remote_entity(&initial.id, 2, older_hlc, false, older_payload)
+        .unwrap());
+
+    assert!(!android
+        .apply_remote_entity(&initial.id, 2, older_hlc, false, older_payload)
+        .unwrap());
+    assert!(android
+        .apply_remote_entity(&initial.id, 2, newer_hlc, false, newer_payload)
+        .unwrap());
+
+    let f_snip = fedora.find_snippet_by_keyword("!deploy").unwrap().unwrap();
+    let a_snip = android.find_snippet_by_keyword("!deploy").unwrap().unwrap();
+    assert_eq!(f_snip.title, "Deploy Fedora v2");
+    assert_eq!(f_snip.body, a_snip.body);
+    assert_eq!(f_snip.hlc_timestamp, a_snip.hlc_timestamp);
+
+    // Un tombstone con HLC aún más reciente propaga el borrado.
+    let delete_hlc = "999999999999999-00ff-android";
+    assert!(fedora
+        .apply_remote_entity(&initial.id, 2, delete_hlc, true, newer_payload)
+        .unwrap());
+    assert!(fedora.find_snippet_by_keyword("!deploy").unwrap().is_none());
+}

@@ -85,5 +85,11 @@ class LauncherManifestTest {
         assertTrue(uniffiHlcShouldApplyRemote("001700000000100-0000-android", "001700000000200-0000-fedora"))
         assertEquals("json", ContentTools.classify("""{"ok":true}"""))
         assertTrue(ContentTools.expandTemplate("svc={{clipboard}} d={{date}}", "fluxcast", 0L).contains("svc=fluxcast d=1970-01-01"))
+
+        // Alterar el AAD (por ejemplo HLC manipulado) debe rechazar el descifrado AEAD en UniFFI.
+        val tamperedResult = runCatching {
+            uniffiOpenEntity(key, entityId, 1, "999999999999999-0000-attacker", sealed.nonce, sealed.ciphertext)
+        }
+        assertTrue(tamperedResult.isFailure)
     }
 }
