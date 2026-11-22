@@ -4,6 +4,7 @@ Monorepo de desarrollo para Fedora KDE Plasma 6 (Wayland) y Android nativo. El [
 
 - **Etapa 0:** entorno de compilación en Fedora KDE, workspace de Rust, base Tauri v2, proyecto Android Gradle y flujos de GitHub Actions.
 - **Etapa 1:** launcher nativo en Fedora KDE Plasma con búsqueda difusa (`nucleo-matcher`), indexador de apps `.desktop` + Flatpak, repositorios Git (Dolphin, VS Code, Konsole, Neovim), utilidades offline (`=`, `b64`/`unb64`, `hex`/`bin`/`dec`, `ts`, `uuid4`/`uuid7`, `jwt`), acciones rápidas de Plasma, atajo global nativo vía `org.freedesktop.portal.GlobalShortcuts` (`Alt+Space`) y respaldo instantáneo por UNIX socket (`fluxcast toggle`).
+- **Etapa 2:** daemon de portapapeles Wayland sobre `ext-data-control-v1` (KWin) con fallback a `zwlr_data_control_manager_v1`, filtrado estricto de contraseñas (`x-kde-passwordManagerHint=secret`), modo pausa/incógnito (5 min, 15 min o manual), historial persistente en SQLite + FTS5 con clasificador automático (`JSON`, `URL`, `código`, `color HEX/RGB`, `JWT`, texto), fijado (`Pin`), pegado limpio (`Shift+Enter`) y bóveda de snippets con etiquetas, alias (`!dprune`, `!klog`), plantillas (`{{clipboard}}`, `{{date}}`, `{{uuid}}`) y ranking por frecuencia.
 
 ## Preparar Fedora KDE
 

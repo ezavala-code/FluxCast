@@ -59,6 +59,11 @@ pub fn plasma_actions() -> Vec<Entry> {
             "plasma:copy-tailscale-ip",
             "ip tailscale vpn mesh ipv4 copiar",
         ),
+        (
+            "Alternar pausa del portapapeles",
+            "plasma:toggle-clipboard-pause",
+            "pause pausa incognito portapapeles clipboard privacidad",
+        ),
     ]
     .into_iter()
     .map(|(name, id, keywords)| {

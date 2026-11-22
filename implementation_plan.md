@@ -358,6 +358,8 @@ fluxcast/
 
 ### Etapa 2 — Daemon de Portapapeles KWin Wayland + Snippets _(Semanas 3–4)_
 
+**Estado:** implementada y verificada localmente en Fedora KDE Plasma (SQLite + FTS5, monitor Wayland `ext-data-control-v1` con filtro `x-kde-passwordManagerHint=secret`, clasificador automático y bóveda de snippets con plantillas).
+
 - **Tareas:**
     1. Implementar SQLite + FTS5 en `fluxcast-core` para `clipboard_items` y `snippets`.
     2. Construir `WaylandDataControlProvider` sobre **`ext-data-control-v1`** (KWin) con filtrado estricto de `x-kde-passwordManagerHint=secret` y _Modo Pausa_.

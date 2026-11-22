@@ -1,21 +1,30 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { AppWindow, ArrowDown, ArrowUp, Braces, Command, CornerDownLeft, FolderGit2, Power, Search, X, Zap } from "lucide-react";
+import { ClipboardView } from "./ClipboardView";
+import { SnippetsView } from "./SnippetsView";
 
-type Scope = "all" | "app" | "project" | "tools";
-type Hit = { id: number; name: string; detail: string; kind: "app" | "project" | "action" };
+type Scope = "all" | "app" | "project" | "tools" | "clipboard" | "snippets";
+type Hit = { id: number; name: string; detail: string; kind: "app" | "project" | "action" | "snippet"; snippet_id?: string };
 type Results = { hits: Hit[]; utility: { label: string; value: string } | null; problem: string | null };
 type Row = Hit | { kind: "example" | "value"; name: string; detail: string };
-const scopes: [Scope, string][] = [["all", "Todo"], ["app", "Aplicaciones"], ["project", "Proyectos"], ["tools", "Utilidades"]];
+const scopes: [Scope, string][] = [
+  ["all", "Todo"],
+  ["app", "Aplicaciones"],
+  ["project", "Proyectos"],
+  ["tools", "Utilidades"],
+  ["clipboard", "Portapapeles"],
+  ["snippets", "Snippets"],
+];
 const openers = [["dolphin", "Dolphin"], ["code", "VS Code"], ["konsole", "Konsole"], ["neovim", "Neovim"]];
 const examples = [
   ["Calculadora", "(1920 * 0.75) + 48"], ["Codificar Base64", "b64 FluxCast"], ["Decodificar Base64", "unb64 SG9sYQ=="],
   ["Generar UUID v4", "uuid4"], ["Generar UUID v7", "uuid7"], ["Convertir fecha Unix / ISO", "ts 1700000000"],
   ["Timestamp actual", "ts now"], ["Leer JWT", "jwt "], ["Hexadecimal", "hex 255"], ["Binario", "bin 10"], ["Decimal", "dec 0xFF"],
 ];
-const kindLabel = { app: "Aplicación", project: "Proyecto Git", action: "Acción", example: "Utilidad", value: "Resultado" };
-const icons = { app: AppWindow, project: FolderGit2, action: Power, example: Braces, value: Braces };
+const kindLabel = { app: "Aplicación", project: "Proyecto Git", action: "Acción", snippet: "Snippet", example: "Utilidad", value: "Resultado" };
+const icons = { app: AppWindow, project: FolderGit2, action: Power, snippet: Braces, example: Braces, value: Braces };
 
 export function CommandBar() {
   const [query, setQuery] = useState("");
@@ -23,22 +32,27 @@ export function CommandBar() {
   const [catalogVersion, setCatalogVersion] = useState(0);
   const [response, setResponse] = useState<{ query: string; scope: Scope; version: number; data: Results } | null>(null);
   const [selected, select] = useState(0);
+  const [subCount, setSubCount] = useState(0);
+  const [clipAction, setClipAction] = useState<{ seq: number; kind: "copy" | "plain" | "pin" | "delete" } | null>(null);
+  const [snipAction, setSnipAction] = useState<{ seq: number; kind: "use" | "new" | "edit" | "delete" } | null>(null);
   const [opener, setOpener] = useState("dolphin");
   const [shortcut, setShortcut] = useState("");
   const [error, setError] = useState("");
   const input = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const busy = useRef(false);
-  const data = response?.query === query && response.scope === scope && response.version === catalogVersion ? response.data : null;
+  const isLauncherScope = scope !== "clipboard" && scope !== "snippets";
+  const data = isLauncherScope && response?.query === query && response.scope === scope && response.version === catalogVersion ? response.data : null;
 
   useEffect(() => {
+    if (!isLauncherScope) return;
     let active = true;
     setError("");
     invoke<Results>("search", { query, scope }).then(result => {
       if (active) setResponse({ query, scope, version: catalogVersion, data: result });
     }).catch(reason => { if (active) setError(String(reason)); });
     return () => { active = false; };
-  }, [query, scope, catalogVersion]);
+  }, [query, scope, catalogVersion, isLauncherScope]);
 
   useEffect(() => {
     let active = true;
@@ -65,8 +79,12 @@ export function CommandBar() {
     list.current?.children[selected]?.scrollIntoView?.({ block: "nearest" });
   }, [selected, data]);
 
+  const hideLauncher = useCallback(async () => {
+    await invoke("hide_launcher");
+  }, []);
+
   function changeScope(next: Scope) {
-    setScope(next); select(0); input.current?.focus();
+    setScope(next); select(0); setError(""); input.current?.focus();
   }
   async function refreshCatalog() {
     if (busy.current) return;
@@ -86,6 +104,7 @@ export function CommandBar() {
     busy.current = true;
     try {
       if (row.kind === "value") await invoke("copy_value", { value: row.detail });
+      else if (row.kind === "snippet" && row.snippet_id) await invoke("use_snippet", { id: row.snippet_id });
       else if ("id" in row) await invoke("open_result", { id: row.id, opener: tool });
       await invoke("hide_launcher");
     } catch (reason) { setError(String(reason)); }
@@ -101,6 +120,43 @@ export function CommandBar() {
     }
     const number = Number(event.key) - 1;
     if (event.ctrlKey && scopes[number]) { event.preventDefault(); changeScope(scopes[number][0]); return; }
+    if (scope === "clipboard") {
+      if (event.ctrlKey && event.key.toLowerCase() === "p") {
+        event.preventDefault();
+        setClipAction(prev => ({ seq: (prev?.seq ?? 0) + 1, kind: "pin" }));
+        return;
+      }
+      if (event.target !== input.current) return;
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        if (subCount) select((selected + (event.key === "ArrowDown" ? 1 : -1) + subCount) % subCount);
+      } else if (event.key === "Enter" && !event.repeat) {
+        event.preventDefault();
+        setClipAction(prev => ({ seq: (prev?.seq ?? 0) + 1, kind: event.shiftKey ? "plain" : "copy" }));
+      }
+      return;
+    }
+    if (scope === "snippets") {
+      if (event.ctrlKey && event.key.toLowerCase() === "n") {
+        event.preventDefault();
+        setSnipAction(prev => ({ seq: (prev?.seq ?? 0) + 1, kind: "new" }));
+        return;
+      }
+      if (event.ctrlKey && event.key.toLowerCase() === "e") {
+        event.preventDefault();
+        setSnipAction(prev => ({ seq: (prev?.seq ?? 0) + 1, kind: "edit" }));
+        return;
+      }
+      if (event.target !== input.current) return;
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        if (subCount) select((selected + (event.key === "ArrowDown" ? 1 : -1) + subCount) % subCount);
+      } else if (event.key === "Enter" && !event.repeat) {
+        event.preventDefault();
+        setSnipAction(prev => ({ seq: (prev?.seq ?? 0) + 1, kind: "use" }));
+      }
+      return;
+    }
     if (event.altKey && current?.kind === "project" && openers[number]) {
       event.preventDefault(); void activate(current, openers[number][0]); return;
     }
@@ -122,8 +178,15 @@ export function CommandBar() {
     <div className="search flex items-center gap-3">
       <Search size={23}/>
       <input ref={input} autoFocus role="combobox" aria-label="Buscar" aria-controls="results" aria-expanded="true"
-        aria-autocomplete="list" aria-activedescendant={current ? 'result-' + selected : undefined}
-        placeholder="Buscar apps, proyectos, acciones o comandos…" value={query}
+        aria-autocomplete="list" aria-activedescendant={isLauncherScope && current ? 'result-' + selected : undefined}
+        placeholder={
+          scope === "clipboard"
+            ? "Buscar en el historial del portapapeles (FTS5)…"
+            : scope === "snippets"
+              ? "Buscar snippets por título, !alias, etiqueta o contenido…"
+              : "Buscar apps, proyectos, !snippets, acciones o comandos…"
+        }
+        value={query}
         spellCheck={false} autoComplete="off" onChange={event => { setQuery(event.target.value); select(0); }}/>
     </div>
     <nav aria-label="Filtrar resultados" className="flex gap-1">
@@ -132,24 +195,61 @@ export function CommandBar() {
     </nav>
     <section className="results">
       {error && <p role="alert" className="error">{error}</p>}
-      <div id="results" role="listbox" aria-label="Resultados" className="list" ref={list}>
-        {rows.map((row, i) => {
-          const Icon = icons[row.kind];
-          return <div role="option" id={'result-' + i} key={'id' in row ? row.id : row.name} aria-selected={selected === i}
-            className={'row ' + row.kind} onMouseDown={e => e.preventDefault()} onClick={() => { select(i); void activate(row); }}>
-            <span className="tile"><Icon size={18}/></span>
-            <span className="description"><strong>{row.name}</strong><small title={row.detail}>{row.detail}</small></span>
-            <span className="kind">{kindLabel[row.kind]}</span>
-          </div>;
-        })}
-      </div>
-      {!rows.length && !error && <p className="empty" role="status">{data?.problem ?? (data ? "Sin resultados" : "Buscando…")}</p>}
+      {scope === "clipboard" ? (
+        <ClipboardView
+          query={query}
+          selected={selected}
+          onSelect={select}
+          onCountChange={setSubCount}
+          onHide={hideLauncher}
+          onError={setError}
+          actionTrigger={clipAction}
+        />
+      ) : scope === "snippets" ? (
+        <SnippetsView
+          query={query}
+          selected={selected}
+          onSelect={select}
+          onCountChange={setSubCount}
+          onHide={hideLauncher}
+          onError={setError}
+          actionTrigger={snipAction}
+        />
+      ) : (
+        <>
+          <div id="results" role="listbox" aria-label="Resultados" className="list" ref={list}>
+            {rows.map((row, i) => {
+              const Icon = icons[row.kind];
+              return <div role="option" id={'result-' + i} key={'id' in row ? row.id : row.name} aria-selected={selected === i}
+                className={'row ' + row.kind} onMouseDown={e => e.preventDefault()} onClick={() => { select(i); void activate(row); }}>
+                <span className="tile"><Icon size={18}/></span>
+                <span className="description"><strong>{row.name}</strong><small title={row.detail}>{row.detail}</small></span>
+                <span className="kind">{kindLabel[row.kind]}</span>
+              </div>;
+            })}
+          </div>
+          {!rows.length && !error && <p className="empty" role="status">{data?.problem ?? (data ? "Sin resultados" : "Buscando…")}</p>}
+        </>
+      )}
     </section>
     <footer className="flex items-center gap-3">
       <span className="flex items-center gap-1"><kbd><ArrowUp/></kbd><kbd><ArrowDown/></kbd> Navegar</span>
-      {current?.kind === "project" && <select aria-label="Abrir proyecto con" value={opener} onChange={e => setOpener(e.target.value)}>
+      {isLauncherScope && current?.kind === "project" && <select aria-label="Abrir proyecto con" value={opener} onChange={e => setOpener(e.target.value)}>
         {openers.map(([key, name], i) => <option key={key} value={key}>{name} · Alt+{i+1}</option>)}</select>}
-      <span className="primary-action"><kbd><CornerDownLeft/></kbd> {current?.kind === "value" ? "Copiar" : current?.kind === "example" ? "Usar" : current?.kind === "action" ? "Ejecutar" : "Abrir"}</span>
+      <span className="primary-action">
+        <kbd><CornerDownLeft/></kbd>{" "}
+        {scope === "clipboard"
+          ? "Copiar · Shift+Enter Limpio · Ctrl+P Fijar"
+          : scope === "snippets"
+            ? "Expandir · Ctrl+N Nuevo · Ctrl+E Editar"
+            : current?.kind === "value" || current?.kind === "snippet"
+              ? "Copiar"
+              : current?.kind === "example"
+                ? "Usar"
+                : current?.kind === "action"
+                  ? "Ejecutar"
+                  : "Abrir"}
+      </span>
       <span className="footer-brand" title="Ctrl+R actualiza el índice" aria-hidden="true"><Command size={15}/></span>
     </footer>
   </main>;

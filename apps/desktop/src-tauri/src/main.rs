@@ -1,11 +1,12 @@
 mod client;
+mod clipboard;
 mod ipc_socket;
 mod launcher;
 mod shortcuts;
 
 use gtk::prelude::GtkWindowExt;
 use launcher::Launcher;
-use std::{env, io, path::PathBuf, sync::mpsc, time::Duration};
+use std::{env, io, path::PathBuf, sync::mpsc, sync::Arc, time::Duration};
 use tauri::{AppHandle, Emitter, Manager};
 
 fn schedule_toggle(
@@ -56,10 +57,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             launcher::refresh_catalog,
             launcher::hide_launcher,
             launcher::copy_value,
-            launcher::shortcut_status
+            launcher::shortcut_status,
+            launcher::list_clipboard,
+            launcher::copy_clipboard_item,
+            launcher::toggle_pin_clipboard,
+            launcher::delete_clipboard_item,
+            launcher::clear_clipboard_history,
+            launcher::clipboard_pause_status,
+            launcher::set_clipboard_pause,
+            launcher::list_snippets,
+            launcher::save_snippet,
+            launcher::use_snippet,
+            launcher::delete_snippet
         ])
         .setup(move |app| {
             launcher::warm_catalog(app.handle().clone());
+            {
+                let state = app.state::<Launcher>();
+                clipboard::spawn_monitor(
+                    app.handle().clone(),
+                    Arc::clone(&state.store),
+                    Arc::clone(&state.pause),
+                );
+            }
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 server.serve(|| {

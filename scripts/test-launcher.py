@@ -139,7 +139,29 @@ def review(binary, root):
         """})
         assert isinstance(response, list), response
         print(f"Búsqueda y despacho GIO por IPC, p50 {statistics.median(response):.2f} ms, p95 {sorted(response)[23]:.2f} ms")
-        print("OK · KWin/Wayland, búsqueda, Enter, apertura de app y proyecto, socket y calculadora", flush=True)
+        stage2 = api("POST", session + "/execute/async", {"args": [], "script": """
+            const done = arguments[arguments.length - 1];
+            (async () => {
+                const { invoke } = window.__TAURI_INTERNALS__;
+                await invoke("copy_value", { value: '{"kde":6,"wayland":"ext-data-control-v1"}' });
+                const clips = await invoke("list_clipboard", { query: "ext-data-control", pinnedOnly: false });
+                if (!clips.length || clips[0].content_type !== "json") {
+                    return done("Fallo clasificador/FTS5 en portapapeles: " + JSON.stringify(clips));
+                }
+                const snippets = await invoke("list_snippets", { query: "!klog", tag: null });
+                if (!snippets.length) {
+                    return done("No se sembraron snippets por defecto");
+                }
+                await invoke("copy_value", { value: "fluxcast.service" });
+                const expanded = await invoke("use_snippet", { id: snippets[0].id });
+                if (!expanded.includes("fluxcast.service")) {
+                    return done("No se expandió {{clipboard}} en snippet: " + expanded);
+                }
+                done("OK");
+            })().catch(e => done(String(e)));
+        """})
+        assert stage2 == "OK", stage2
+        print("OK · KWin/Wayland, búsqueda, Enter, apertura de app y proyecto, socket, calculadora, portapapeles FTS5 y snippets", flush=True)
 
 
 if __name__ == "__main__":

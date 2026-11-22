@@ -11,6 +11,7 @@ pub enum Kind {
     App,
     Project,
     Action,
+    Snippet,
 }
 
 pub struct Entry {

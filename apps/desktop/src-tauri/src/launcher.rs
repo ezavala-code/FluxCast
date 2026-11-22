@@ -1,6 +1,9 @@
+use crate::clipboard::{PauseController, PauseStatus};
 use fluxcast_core::{
     catalog::{Catalog, Kind},
+    classifier::plain_text,
     desktop::system_catalog,
+    store::{ClipboardItem, Snippet, SnippetInput, Store},
     utilities::{evaluate, Output},
 };
 use gio::prelude::AppInfoExt;
@@ -11,12 +14,29 @@ use std::{
     process::{Child, Command},
     sync::{Arc, Mutex, RwLock},
 };
-use tauri::{AppHandle, Manager, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 
-#[derive(Default)]
 pub struct Launcher {
     catalog: RwLock<Option<Arc<Catalog>>>,
     pub shortcut: Mutex<String>,
+    pub store: Arc<Store>,
+    pub pause: Arc<PauseController>,
+}
+
+impl Default for Launcher {
+    fn default() -> Self {
+        let db_path = gio::glib::user_data_dir().join("fluxcast/fluxcast.db");
+        let store = Store::open(&db_path)
+            .or_else(|_| Store::open_in_memory())
+            .expect("No se pudo inicializar SQLite");
+        let _ = store.seed_default_snippets();
+        Self {
+            catalog: RwLock::new(None),
+            shortcut: Mutex::new(String::new()),
+            store: Arc::new(store),
+            pause: Arc::new(PauseController::default()),
+        }
+    }
 }
 
 impl Launcher {
@@ -47,6 +67,8 @@ pub struct Hit {
     name: String,
     detail: String,
     kind: Kind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    snippet_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -71,6 +93,9 @@ fn action_detail(id: &str) -> &'static str {
         "plasma:suspend" => "Suspende el equipo (systemctl suspend)",
         "plasma:copy-local-ip" => "Copia la dirección IPv4 local al portapapeles",
         "plasma:copy-tailscale-ip" => "Copia la dirección IPv4 de Tailscale al portapapeles",
+        "plasma:toggle-clipboard-pause" => {
+            "Alterna el modo pausa / incógnito del historial de portapapeles"
+        }
         _ => "Acción rápida de Plasma",
     }
 }
@@ -88,6 +113,42 @@ pub async fn refresh_catalog(app: AppHandle) -> Result<(), String> {
 pub async fn search(app: AppHandle, query: String, scope: Scope) -> Result<Results, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<Launcher>();
+        let trimmed = query.trim();
+
+        if matches!(scope, Scope::All | Scope::Tools) && trimmed.starts_with('!') {
+            let snippet_query = trimmed.trim_start_matches('!');
+            let snippets = state
+                .store
+                .list_snippets(
+                    if snippet_query.is_empty() {
+                        ""
+                    } else {
+                        trimmed
+                    },
+                    None,
+                )
+                .unwrap_or_default();
+            let hits = snippets
+                .into_iter()
+                .enumerate()
+                .map(|(idx, s)| Hit {
+                    id: 100_000 + idx,
+                    name: match &s.keyword {
+                        Some(kw) => format!("{} ({kw})", s.title),
+                        None => s.title,
+                    },
+                    detail: s.body,
+                    kind: Kind::Snippet,
+                    snippet_id: Some(s.id),
+                })
+                .collect();
+            return Results {
+                hits,
+                utility: None,
+                problem: None,
+            };
+        }
+
         let kind = match scope {
             Scope::App => Some(Kind::App),
             Scope::Project => Some(Kind::Project),
@@ -102,7 +163,6 @@ pub async fn search(app: AppHandle, query: String, scope: Scope) -> Result<Resul
             Some(Err(problem)) => (None, Some(problem)),
             None => (None, None),
         };
-        let trimmed = query.trim();
         if utility.is_some()
             || problem.is_some()
             || (matches!(scope, Scope::Tools) && trimmed.is_empty())
@@ -132,6 +192,7 @@ pub async fn search(app: AppHandle, query: String, scope: Scope) -> Result<Resul
                     name: entry.name.clone(),
                     kind: entry.kind,
                     detail,
+                    snippet_id: None,
                 })
             })
             .collect();
@@ -230,7 +291,23 @@ fn tailscale_ipv4() -> Result<String, String> {
         .ok_or_else(|| "Tailscale no devolvió ninguna IPv4".into())
 }
 
-fn run_action(action: &str) -> Result<(), String> {
+fn set_system_clipboard(state: &Launcher, value: &str) {
+    state.pause.mark_internal_copy(value);
+    gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD).set_text(value);
+    if !state.pause.is_paused() {
+        let _ = state.store.record_clipboard(value);
+    }
+}
+
+fn current_clipboard_text(state: &Launcher) -> String {
+    gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD)
+        .wait_for_text()
+        .map(|s| s.to_string())
+        .or_else(|| state.store.latest_clipboard_text().ok().flatten())
+        .unwrap_or_default()
+}
+
+fn run_action(app: &AppHandle, state: &Launcher, action: &str) -> Result<(), String> {
     match action {
         "plasma:lock" => Command::new("loginctl")
             .arg("lock-session")
@@ -244,12 +321,19 @@ fn run_action(action: &str) -> Result<(), String> {
             .map_err(|e| format!("No se pudo suspender el equipo: {e}")),
         "plasma:copy-local-ip" => {
             let ip = local_ipv4()?;
-            copy_value(ip);
+            set_system_clipboard(state, &ip);
+            let _ = app.emit("clipboard-updated", ());
             Ok(())
         }
         "plasma:copy-tailscale-ip" => {
             let ip = tailscale_ipv4()?;
-            copy_value(ip);
+            set_system_clipboard(state, &ip);
+            let _ = app.emit("clipboard-updated", ());
+            Ok(())
+        }
+        "plasma:toggle-clipboard-pause" => {
+            let status = state.pause.toggle_manual();
+            let _ = app.emit("pause-updated", &status);
             Ok(())
         }
         _ => Err("Acción desconocida".into()),
@@ -257,7 +341,12 @@ fn run_action(action: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn open_result(state: State<'_, Launcher>, id: usize, opener: Opener) -> Result<(), String> {
+pub fn open_result(
+    app: AppHandle,
+    state: State<'_, Launcher>,
+    id: usize,
+    opener: Opener,
+) -> Result<(), String> {
     let catalog = state
         .catalog
         .read()
@@ -274,13 +363,15 @@ pub fn open_result(state: State<'_, Launcher>, id: usize, opener: Opener) -> Res
             .spawn()
             .map(reap)
             .map_err(|e| format!("No se pudo abrir con {opener:?}: {e}")),
-        Kind::Action => run_action(entry.path.to_str().unwrap_or_default()),
+        Kind::Action => run_action(&app, &state, entry.path.to_str().unwrap_or_default()),
+        Kind::Snippet => Err("Usa use_snippet para expandir snippets".into()),
     }
 }
 
 #[tauri::command]
-pub fn copy_value(value: String) {
-    gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD).set_text(&value);
+pub fn copy_value(app: AppHandle, state: State<'_, Launcher>, value: String) {
+    set_system_clipboard(&state, &value);
+    let _ = app.emit("clipboard-updated", ());
 }
 
 #[tauri::command]
@@ -291,6 +382,129 @@ pub fn hide_launcher(window: WebviewWindow) -> Result<(), String> {
 #[tauri::command]
 pub fn shortcut_status(state: State<'_, Launcher>) -> String {
     state.shortcut.lock().unwrap().clone()
+}
+
+#[tauri::command]
+pub async fn list_clipboard(
+    app: AppHandle,
+    query: String,
+    pinned_only: bool,
+) -> Result<Vec<ClipboardItem>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<Launcher>()
+            .store
+            .list_clipboard(&query, pinned_only, 100)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn copy_clipboard_item(
+    app: AppHandle,
+    state: State<'_, Launcher>,
+    id: String,
+    plain: bool,
+) -> Result<String, String> {
+    let item = state
+        .store
+        .get_clipboard_item(&id)?
+        .ok_or_else(|| "Elemento de portapapeles no encontrado".to_string())?;
+    let text = if plain {
+        plain_text(&item.content)
+    } else {
+        item.content
+    };
+    set_system_clipboard(&state, &text);
+    let _ = app.emit("clipboard-updated", ());
+    Ok(text)
+}
+
+#[tauri::command]
+pub fn toggle_pin_clipboard(
+    app: AppHandle,
+    state: State<'_, Launcher>,
+    id: String,
+) -> Result<bool, String> {
+    let pinned = state.store.toggle_pin_clipboard(&id)?;
+    let _ = app.emit("clipboard-updated", ());
+    Ok(pinned)
+}
+
+#[tauri::command]
+pub fn delete_clipboard_item(
+    app: AppHandle,
+    state: State<'_, Launcher>,
+    id: String,
+) -> Result<(), String> {
+    state.store.delete_clipboard_item(&id)?;
+    let _ = app.emit("clipboard-updated", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub fn clear_clipboard_history(
+    app: AppHandle,
+    state: State<'_, Launcher>,
+) -> Result<usize, String> {
+    let removed = state.store.clear_unpinned_clipboard()?;
+    let _ = app.emit("clipboard-updated", ());
+    Ok(removed)
+}
+
+#[tauri::command]
+pub fn clipboard_pause_status(state: State<'_, Launcher>) -> PauseStatus {
+    state.pause.status()
+}
+
+#[tauri::command]
+pub fn set_clipboard_pause(
+    app: AppHandle,
+    state: State<'_, Launcher>,
+    minutes: Option<u64>,
+    manual: bool,
+) -> PauseStatus {
+    let status = state.pause.set_pause(minutes, manual);
+    let _ = app.emit("pause-updated", &status);
+    status
+}
+
+#[tauri::command]
+pub async fn list_snippets(
+    app: AppHandle,
+    query: String,
+    tag: Option<String>,
+) -> Result<Vec<Snippet>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<Launcher>()
+            .store
+            .list_snippets(&query, tag.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn save_snippet(state: State<'_, Launcher>, input: SnippetInput) -> Result<Snippet, String> {
+    state.store.save_snippet(input)
+}
+
+#[tauri::command]
+pub fn use_snippet(
+    app: AppHandle,
+    state: State<'_, Launcher>,
+    id: String,
+) -> Result<String, String> {
+    let current_clip = current_clipboard_text(&state);
+    let expanded = state.store.use_snippet(&id, &current_clip)?;
+    set_system_clipboard(&state, &expanded);
+    let _ = app.emit("clipboard-updated", ());
+    Ok(expanded)
+}
+
+#[tauri::command]
+pub fn delete_snippet(state: State<'_, Launcher>, id: String) -> Result<(), String> {
+    state.store.delete_snippet(&id)
 }
 
 #[cfg(test)]

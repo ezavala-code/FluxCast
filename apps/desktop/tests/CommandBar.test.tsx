@@ -94,4 +94,58 @@ describe("CommandBar", () => {
     expect(ipc).toHaveBeenCalledWith("open_result", { id: 99, opener: "dolphin" });
     expect(ipc).toHaveBeenCalledWith("hide_launcher");
   });
+
+  it("gestiona el historial de portapapeles con Ctrl+5, fijado y pegado limpio con Shift+Enter", async () => {
+    const user = userEvent.setup();
+    const clipItem = {
+      id: "clip-1",
+      content_type: "json",
+      content: "{\"kde\":6}",
+      preview: "{\"kde\":6}",
+      is_pinned: false,
+      updated_at: 100,
+      formatted: "{\n  \"kde\": 6\n}",
+      language: "json",
+      color_swatch: null,
+    };
+    ipc.mockImplementation(async cmd => {
+      if (cmd === "list_clipboard") return [clipItem];
+      if (cmd === "clipboard_pause_status") return { paused: false, mode: "active", remaining_seconds: null };
+      if (cmd === "search") return results;
+      return "";
+    });
+    render(<CommandBar/>);
+    await user.keyboard("{Control>}5{/Control}");
+    await screen.findByText("{\"kde\":6}");
+    await user.keyboard("{Control>}p{/Control}");
+    await waitFor(() => expect(ipc).toHaveBeenCalledWith("toggle_pin_clipboard", { id: "clip-1" }));
+    await user.keyboard("{Shift>}{Enter}{/Shift}");
+    await waitFor(() => expect(ipc).toHaveBeenCalledWith("copy_clipboard_item", { id: "clip-1", plain: true }));
+    expect(ipc).toHaveBeenCalledWith("hide_launcher");
+  });
+
+  it("expande y crea snippets en la bóveda con Ctrl+6", async () => {
+    const user = userEvent.setup();
+    const snippet = {
+      id: "snip-1",
+      title: "Limpiar Docker",
+      keyword: "!dprune",
+      body: "docker system prune -af",
+      language: "shell",
+      tags: ["docker", "fedora"],
+      use_count: 4,
+      updated_at: 200,
+    };
+    ipc.mockImplementation(async cmd => {
+      if (cmd === "list_snippets") return [snippet];
+      if (cmd === "search") return results;
+      return "";
+    });
+    render(<CommandBar/>);
+    await user.keyboard("{Control>}6{/Control}");
+    await screen.findByText(/Limpiar Docker/);
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(ipc).toHaveBeenCalledWith("use_snippet", { id: "snip-1" }));
+    expect(ipc).toHaveBeenCalledWith("hide_launcher");
+  });
 });
