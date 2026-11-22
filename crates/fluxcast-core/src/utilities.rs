@@ -5,6 +5,7 @@ use base64::{
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::Serialize;
 use serde_json::Value;
+use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 #[derive(Debug, Serialize)]
@@ -18,32 +19,33 @@ type Answer = Result<String, &'static str>;
 /// El resultado se calcula una sola vez y la interfaz copia ese mismo valor.
 pub fn evaluate(query: &str) -> Option<Result<Output, &'static str>> {
     let query = query.trim_start();
-    let (command, input) = query.split_once(char::is_whitespace).unwrap_or((query, ""));
-    let (label, answer) = match command {
-        "b64" => ("Base64", Ok(STANDARD.encode(input))),
-        "unb64" => (
-            "Texto UTF-8",
-            STANDARD
-                .decode(input.trim())
-                .map_err(|_| "Base64 inválido")
-                .and_then(|v| String::from_utf8(v).map_err(|_| "El contenido no es UTF-8")),
-        ),
-        "hex" | "bin" | "dec" => ("Conversión de base", convert_number(command, input.trim())),
-        "ts" => ("Fecha UTC / Unix", timestamp(input.trim())),
-        "jwt" => ("JWT · contenido sin verificar", jwt(input.trim())),
-        "uuid4" | "uuid7" if input.trim().is_empty() => (
-            "UUID",
-            Ok(if command == "uuid4" {
-                Uuid::new_v4()
-            } else {
-                Uuid::now_v7()
-            }
-            .to_string()),
-        ),
-        _ if query.starts_with('=') => ("Calculadora", calculate(query[1..].trim())),
-        _ if query.bytes().any(|b| b.is_ascii_digit()) && arithmetic_text(query) => {
-            ("Calculadora", calculate(query))
+    if query.is_empty() {
+        return None;
+    }
+    if let Some(expr) = query.strip_prefix('=') {
+        return Some(calculate(expr.trim()).map(|value| Output {
+            label: "Calculadora",
+            value,
+        }));
+    }
+    let (raw_command, input) = match query.split_once(char::is_whitespace) {
+        Some((command, rest)) => (command, Some(rest)),
+        None => (query, None),
+    };
+    let command = raw_command.to_ascii_lowercase();
+    let (label, answer) = match (command.as_str(), input) {
+        ("uuid4", None) => ("UUID", Ok(Uuid::new_v4().to_string())),
+        ("uuid7", None) => ("UUID", Ok(Uuid::now_v7().to_string())),
+        ("uuid4", Some(rest)) if rest.trim().is_empty() => ("UUID", Ok(Uuid::new_v4().to_string())),
+        ("uuid7", Some(rest)) if rest.trim().is_empty() => ("UUID", Ok(Uuid::now_v7().to_string())),
+        ("b64", Some(rest)) if !rest.is_empty() => ("Base64", Ok(STANDARD.encode(rest))),
+        ("unb64", Some(rest)) => ("Texto UTF-8", decode_base64(rest.trim())),
+        ("hex" | "bin" | "dec", Some(rest)) => {
+            ("Conversión de base", convert_number(&command, rest.trim()))
         }
+        ("ts", Some(rest)) => ("Fecha UTC / Unix", timestamp(rest.trim())),
+        ("jwt", Some(rest)) => ("JWT · contenido sin verificar", jwt(rest.trim())),
+        _ if is_implicit_math(query) => ("Calculadora", calculate(query)),
         _ => return None,
     };
     Some(answer.map(|value| Output { label, value }))
@@ -52,6 +54,22 @@ pub fn evaluate(query: &str) -> Option<Result<Output, &'static str>> {
 fn arithmetic_text(text: &str) -> bool {
     text.bytes()
         .all(|b| b.is_ascii_digit() || b"+-*/%^(). \t".contains(&b))
+}
+
+fn is_implicit_math(text: &str) -> bool {
+    text.bytes().any(|b| b.is_ascii_digit())
+        && text.bytes().any(|b| b"+-*/%^".contains(&b))
+        && arithmetic_text(text)
+}
+
+fn decode_base64(input: &str) -> Answer {
+    if input.is_empty() {
+        return Err("Escribe texto Base64 para decodificar");
+    }
+    STANDARD
+        .decode(input)
+        .map_err(|_| "Base64 inválido")
+        .and_then(|v| String::from_utf8(v).map_err(|_| "El contenido no es UTF-8"))
 }
 
 fn calculate(text: &str) -> Answer {
@@ -91,6 +109,13 @@ fn convert_number(command: &str, input: &str) -> Answer {
 }
 
 fn timestamp(input: &str) -> Answer {
+    if input.eq_ignore_ascii_case("now") {
+        let secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| "Reloj del sistema anterior a 1970")?
+            .as_secs();
+        return Ok(secs.to_string());
+    }
     if let Ok(seconds) = input.parse::<i64>() {
         return DateTime::<Utc>::from_timestamp(seconds, 0)
             .map(|date| date.to_rfc3339_opts(SecondsFormat::Secs, true))
@@ -98,7 +123,7 @@ fn timestamp(input: &str) -> Answer {
     }
     DateTime::parse_from_rfc3339(input)
         .map(|date| date.timestamp().to_string())
-        .map_err(|_| "Usa segundos Unix o una fecha ISO 8601 con zona horaria")
+        .map_err(|_| "Usa 'now', segundos Unix o una fecha ISO 8601 con zona horaria")
 }
 
 fn jwt(token: &str) -> Answer {

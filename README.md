@@ -1,15 +1,18 @@
 # FluxCast
 
-Monorepo de desarrollo para Fedora KDE y Android. En la etapa 0 se puede abrir la ventana de escritorio, compilar la app Android y probar el workspace de Rust. El [plan de implementación](implementation_plan.md) describe las funciones de las siguientes etapas.
+Monorepo de desarrollo para Fedora KDE Plasma 6 (Wayland) y Android nativo. El [plan de implementación](implementation_plan.md) detalla las etapas del proyecto.
+
+- **Etapa 0:** entorno de compilación en Fedora KDE, workspace de Rust, base Tauri v2, proyecto Android Gradle y flujos de GitHub Actions.
+- **Etapa 1:** launcher nativo en Fedora KDE Plasma con búsqueda difusa (`nucleo-matcher`), indexador de apps `.desktop` + Flatpak, repositorios Git (Dolphin, VS Code, Konsole, Neovim), utilidades offline (`=`, `b64`/`unb64`, `hex`/`bin`/`dec`, `ts`, `uuid4`/`uuid7`, `jwt`), acciones rápidas de Plasma, atajo global nativo vía `org.freedesktop.portal.GlobalShortcuts` (`Alt+Space`) y respaldo instantáneo por UNIX socket (`fluxcast toggle`).
 
 ## Preparar Fedora KDE
 
-Instala las dependencias nativas de compilación y Podman Compose.
+Instala las dependencias nativas de compilación, empaquetado (`.rpm` / `AppImage`) y Podman Compose.
 
 ```sh
 sudo dnf install webkit2gtk4.1-devel openssl-devel curl wget file \
   libappindicator-gtk3-devel librsvg2-devel sqlite-devel wl-clipboard \
-  pkgconf-pkg-config gcc-c++ podman-compose
+  pkgconf-pkg-config gcc-c++ rpm-build patchelf fuse fuse-libs podman-compose
 ```
 
 Instala Rust estable con rustup y usa Node.js 22.12 o posterior. Desde la raíz del repositorio, prepara pnpm y los dos targets nativos de Android.
@@ -30,17 +33,38 @@ export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018"
   "platforms;android-35" "build-tools;34.0.0" "ndk;27.2.12479018"
 ```
 
-Configura `JAVA_HOME` con el directorio del JDK 17 para ejecutar Gradle. Android Studio también permite seleccionarlo como Gradle JDK al abrir `apps/android`.
+Configura `JAVA_HOME` con el directorio del JDK 17 para ejecutar Gradle (o instálalo bajo `~/.jdks/` para que Gradle lo detecte automáticamente con `gradle-daemon-jvm.properties`). Android Studio también permite seleccionarlo como Gradle JDK al abrir `apps/android`.
 
-## Verificar la etapa 0
+## Usar el launcher en Fedora KDE (Etapa 1)
 
-Ejecuta desde la raíz. Las pruebas unitarias de Android corren en la JVM y comprueban la actividad de inicio declarada en el manifiesto fusionado.
+Compila la aplicación de escritorio y ejecuta el binario `fluxcast`:
 
 ```sh
-cargo test --workspace
+pnpm --filter @fluxcast/desktop tauri build --no-bundle
+./target/release/fluxcast
+```
+
+También puedes abrirlo en modo desarrollo con `pnpm --filter @fluxcast/desktop tauri dev`.
+
+- **Atajo global nativo:** al iniciar, FluxCast registra `toggle_launcher` (`Alt+Space`) en `xdg-desktop-portal-kde`. Puedes reasignarlo en *Preferencias del Sistema → Accesos rápidos*.
+- **Alternado instantáneo por socket (<5 ms):** ejecuta `fluxcast toggle` (o `fluxcast` si ya está activo) para mostrar u ocultar la ventana desde scripts o atajos personalizados de KWin.
+- **Atajos internos:** `↑`/`↓` navegar, `Enter` abrir/copiar/ejecutar, `Esc` ocultar, `Ctrl+1..4` cambiar pestaña, `Alt+1..4` elegir editor para proyectos Git, `Ctrl+R` reindexar apps y repositorios.
+- **Directorios de proyectos Git:** por defecto escanea `~/Proyectos`, `~/Projects` y `~/Dev`; puedes personalizarlos con `FLUXCAST_PROJECT_DIRS="/ruta/a:/ruta/b"`.
+
+## Verificar el proyecto
+
+Ejecuta desde la raíz:
+
+```sh
+cargo fmt --all --check
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace
+pnpm --filter @fluxcast/desktop test
+pnpm --filter @fluxcast/desktop tauri build --no-bundle
+python3 scripts/test-launcher.py
 ./gradlew testDebugUnitTest
 ```
 
-Para abrir el escritorio en Fedora, ejecuta `pnpm --filter @fluxcast/desktop tauri dev`. Para generar el APK, ejecuta `./gradlew assembleDebug`. Gradle lo escribe en `apps/android/app/build/outputs/apk/debug/app-debug.apk`.
+Para generar los instaladores en Fedora ejecuta `pnpm --filter @fluxcast/desktop tauri build --bundles rpm,appimage`. Para generar el APK de Android ejecuta `./gradlew assembleDebug` (salida en `apps/android/app/build/outputs/apk/debug/app-debug.apk`).
 
 GitHub Actions comprueba formato, Clippy y pruebas de Rust, compila el escritorio Tauri y construye las dos bibliotecas nativas de Android junto con las pruebas y el APK de depuración.

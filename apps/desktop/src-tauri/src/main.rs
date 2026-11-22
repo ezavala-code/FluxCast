@@ -1,3 +1,4 @@
+mod client;
 mod ipc_socket;
 mod launcher;
 mod shortcuts;
@@ -40,23 +41,10 @@ fn schedule_toggle(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<_> = env::args_os().skip(1).collect();
-    if matches!(args.as_slice(), [s] if s == "--help" || s == "-h") {
-        println!(
-            "fluxcast         Iniciar el launcher\nfluxcast toggle  Mostrar u ocultar la ventana"
-        );
-        return Ok(());
-    }
     let runtime = PathBuf::from(env::var_os("XDG_RUNTIME_DIR").ok_or("Falta XDG_RUNTIME_DIR")?);
-    if matches!(args.as_slice(), [s] if s == "toggle") {
-        return Ok(ipc_socket::toggle(&runtime)?);
-    }
-    if !args.is_empty() {
-        return Err("Uso: fluxcast [toggle]".into());
-    }
     let server = match ipc_socket::Server::bind(&runtime) {
         Ok(server) => server,
-        Err(e) if e.kind() == io::ErrorKind::AddrInUse => return Ok(ipc_socket::toggle(&runtime)?),
+        Err(e) if e.kind() == io::ErrorKind::AddrInUse => return Ok(client::toggle(&runtime)?),
         Err(e) => return Err(e.into()),
     };
 
@@ -65,11 +53,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .invoke_handler(tauri::generate_handler![
             launcher::search,
             launcher::open_result,
+            launcher::refresh_catalog,
             launcher::hide_launcher,
             launcher::copy_value,
             launcher::shortcut_status
         ])
         .setup(move |app| {
+            launcher::warm_catalog(app.handle().clone());
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 server.serve(|| {

@@ -3,7 +3,7 @@ use std::{
     io::{self, Read, Write},
     os::unix::{
         fs::{FileTypeExt, OpenOptionsExt, PermissionsExt},
-        net::{UnixListener, UnixStream},
+        net::UnixListener,
     },
     path::{Path, PathBuf},
     time::Duration,
@@ -60,21 +60,15 @@ impl Drop for Server {
     }
 }
 
-pub fn toggle(dir: &Path) -> io::Result<()> {
-    let mut stream = UnixStream::connect(dir.join("fluxcast.sock"))?;
-    stream.set_read_timeout(Some(Duration::from_secs(3)))?;
-    stream.write_all(b"toggle\n")?;
-    let mut ack = [0; 3];
-    stream.read_exact(&mut ack)?;
-    if &ack != b"OK\n" {
-        return Err(io::Error::other("El launcher rechazó la solicitud"));
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::client;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+
     #[test]
     fn singleton_recovers_stale_socket_and_preserves_unrelated_files() {
         let temp = tempfile::tempdir().unwrap();
@@ -92,5 +86,19 @@ mod tests {
         fs::write(&path, "conservar").unwrap();
         assert!(Server::bind(temp.path()).is_err());
         assert_eq!(fs::read_to_string(path).unwrap(), "conservar");
+    }
+
+    #[test]
+    fn client_toggle_roundtrip_acknowledges_success_and_rejection() {
+        let temp = tempfile::tempdir().unwrap();
+        let server = Server::bind(temp.path()).unwrap();
+        let allow = Arc::new(AtomicBool::new(true));
+        let flag = Arc::clone(&allow);
+        std::thread::spawn(move || {
+            server.serve(|| flag.load(Ordering::SeqCst));
+        });
+        assert!(client::toggle(temp.path()).is_ok());
+        allow.store(false, Ordering::SeqCst);
+        assert!(client::toggle(temp.path()).is_err());
     }
 }

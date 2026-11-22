@@ -339,16 +339,19 @@ fluxcast/
         ```bash
         sudo dnf install webkit2gtk4.1-devel openssl-devel curl wget file \
           libappindicator-gtk3-devel librsvg2-devel sqlite-devel \
-          wl-clipboard pkg-config gcc-c++ java-17-openjdk-devel
+          wl-clipboard pkgconf-pkg-config gcc-c++ rpm-build patchelf fuse fuse-libs podman-compose
         ```
+        _(En Fedora 45+, instala Temurin JDK 17 para Gradle ya que `java-17-openjdk-devel` ya no está en los repositorios estándar.)_
     2. Instalar `rustup`, `pnpm`, `cargo-ndk`, targets Android (`aarch64-linux-android`, `x86_64-linux-android`), Android Studio (SDK + NDK r27+) y `podman-compose` o `docker`.
     3. Crear la estructura del monorepo (Cargo Workspace + Tauri + Gradle Android + GitHub Actions CI).
 - **Entregable:** `cargo test --workspace` y `./gradlew testDebugUnitTest` pasando en verde.
 
 ### Etapa 1 — Launcher Nativo en Fedora KDE Plasma _(Semanas 1–2)_
 
+**Estado:** implementada y verificada localmente en Fedora KDE Plasma (KWin Wayland + `xdg-desktop-portal-kde` + UNIX socket).
+
 - **Tareas:**
-    1. Implementar `crates/fluxcast-core`: motor fuzzy `nucleo-matcher`, indexador de `.desktop` + Flatpak, escáner de repositorios Git y _Dev Utilities_ (calculadora, Base64, UUID, timestamp, JWT).
+    1. Implementar `crates/fluxcast-core`: motor fuzzy `nucleo-matcher`, indexador de `.desktop` + Flatpak, escáner de repositorios Git, _Dev Utilities_ (calculadora, Base64, UUID, timestamp, JWT) y acciones rápidas de Plasma.
     2. Construir la ventana flotante sin bordes en Tauri v2 (React + Tailwind con paleta Breeze Dark) navegable al 100 % con teclado.
     3. Implementar el atajo global nativo en Plasma 6 usando **`ashpd` (`org.freedesktop.portal.GlobalShortcuts`)** + respaldo instantáneo por UNIX Socket (`fluxcast toggle`).
 - **Entregable:** Invocas FluxCast con `Alt+Space` en Fedora KDE, buscas un proyecto Git o app y lo abres en <15 ms.

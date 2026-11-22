@@ -35,6 +35,7 @@ nav button[aria-pressed="true"] { color: var(--accent); background: #2a403b; }
 .row[aria-selected="true"] { background: #293a39; border-color: #49665f; }
 .tile { flex-shrink: 0; width: 32px; height: 32px; border: 1px solid #485766; border-radius: 7px; background: #303d49; color: #a6c6e8; }
 .project .tile { background: #3f3849; color: #d1b6e8; border-color: #554761; }
+.action .tile { background: #463a2e; color: #f2c98a; border-color: #63513e; }
 .value .tile, .example .tile { background: #35443d; color: var(--accent); border-color: #4a6054; }
 .description { min-width: 0; flex: 1; }
 .description strong, .description small { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

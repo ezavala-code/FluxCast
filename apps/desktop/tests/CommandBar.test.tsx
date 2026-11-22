@@ -80,4 +80,18 @@ describe("CommandBar", () => {
     await user.keyboard("{Enter}");
     await waitFor(() => expect(ipc).toHaveBeenCalledWith("search", { query: "(1920 * 0.75) + 48", scope: "tools" }));
   });
+
+  it("actualiza el catálogo con Ctrl+R y ejecuta acciones rápidas de Plasma", async () => {
+    const user = userEvent.setup();
+    const action = { id: 99, kind: "action", name: "Bloquear sesión", detail: "Bloquea la sesión actual de Plasma (loginctl)" };
+    ipc.mockImplementation(async cmd => cmd === "search" ? { hits: [action], utility: null, problem: null } : "");
+    render(<CommandBar/>);
+    await screen.findByText("Bloquear sesión");
+    expect(screen.getByText("Ejecutar")).toBeTruthy();
+    await user.keyboard("{Control>}r{/Control}");
+    await waitFor(() => expect(ipc).toHaveBeenCalledWith("refresh_catalog"));
+    await user.keyboard("{Enter}");
+    expect(ipc).toHaveBeenCalledWith("open_result", { id: 99, opener: "dolphin" });
+    expect(ipc).toHaveBeenCalledWith("hide_launcher");
+  });
 });

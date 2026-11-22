@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -60,8 +61,8 @@ def review(binary, root):
             raise RuntimeError(error.read().decode()) from error
 
     with ExitStack() as stack:
-        def start(args):
-            proc = subprocess.Popen(args, env=env)
+        def start(args, **options):
+            proc = subprocess.Popen(args, env=env, **options)
             def stop():
                 proc.terminate()
                 try:
@@ -72,6 +73,10 @@ def review(binary, root):
             stack.callback(stop)
         start(["kwin_wayland", "--virtual", "--socket", env["WAYLAND_DISPLAY"]])
         wait_for((root / env["WAYLAND_DISPLAY"]).exists, "KWin no creó el display")
+        portal_log = root / "shortcut-request.log"
+        log = stack.enter_context(portal_log.open("w"))
+        start(["stdbuf", "-oL", "dbus-monitor", "--session",
+               "interface='org.freedesktop.portal.GlobalShortcuts',member='BindShortcuts'"], stdout=log)
         start(["WebKitWebDriver", "-p", str(port)])
         def ready():
             try:
@@ -90,6 +95,8 @@ def review(binary, root):
         def has_text(text):
             return js("return document.body.innerText").find(text) != -1
         wait_for(lambda: js("return !!document.querySelector('input')"), "No cargó React")
+        wait_for(lambda: all(field in portal_log.read_text() for field in ('"toggle_launcher"', '"ALT+space"')),
+                 "FluxCast no solicitó Alt+Space al portal KDE")
         keys("FluxCastReviewApp")
         wait_for(lambda: has_text("review.desktop"), "No se indexó la aplicación")
         keys("\ue007")
@@ -104,14 +111,55 @@ def review(binary, root):
         subprocess.run([binary, "toggle"], check=True, env=env)
         keys("= 17 * 3")
         wait_for(lambda: has_text("51"), "La calculadora no respondió")
+        keys("\ue007")
+        def clipboard_matches():
+            read = subprocess.run(["wl-paste", "--no-newline"], env=env, capture_output=True, timeout=3)
+            return read.returncode == 0 and read.stdout == b"51"
+        wait_for(clipboard_matches, "Enter no copió el resultado en Wayland")
+        timings = []
+        for _ in range(21):
+            before = time.perf_counter_ns()
+            subprocess.run([binary, "toggle"], check=True, env=env)
+            timings.append((time.perf_counter_ns() - before) / 1e6)
+        print(f"CLI y cambio de visibilidad, p50 {statistics.median(timings):.2f} ms, p95 {sorted(timings)[19]:.2f} ms")
+        # Usar el IPC real excluye el transporte de WebDriver de la medición.
+        response = api("POST", session + "/execute/async", {"args": [], "script": """
+            const done = arguments[arguments.length - 1];
+            (async () => {
+                const { invoke } = window.__TAURI_INTERNALS__;
+                const times = [];
+                for (let i = 0; i < 25; i++) {
+                    const start = performance.now();
+                    const results = await invoke("search", {query: "FluxCastReviewApp", scope: "app"});
+                    await invoke("open_result", {id: results.hits[0].id, opener: "dolphin"});
+                    times.push(performance.now() - start);
+                }
+                done(times);
+            })().catch(e => done(String(e)));
+        """})
+        assert isinstance(response, list), response
+        print(f"Búsqueda y despacho GIO por IPC, p50 {statistics.median(response):.2f} ms, p95 {sorted(response)[23]:.2f} ms")
         print("OK · KWin/Wayland, búsqueda, Enter, apertura de app y proyecto, socket y calculadora", flush=True)
 
 
 if __name__ == "__main__":
-    binary = Path(sys.argv[1] if len(sys.argv) > 1 else "target/debug/fluxcast").resolve(strict=True)
+    default_binary = Path("target/release/fluxcast")
+    binary_arg = Path(sys.argv[1]) if len(sys.argv) > 1 else default_binary
+    if not binary_arg.exists():
+        raise SystemExit(
+            f"No existe {binary_arg}. Compila primero con: pnpm --filter @fluxcast/desktop tauri build --no-bundle"
+        )
+    binary = binary_arg.resolve(strict=True)
     if len(sys.argv) == 4 and sys.argv[2] == "--session":
         review(binary, Path(sys.argv[3]))
     else:
-        with tempfile.TemporaryDirectory(prefix="fluxcast-review-") as directory:
-            subprocess.run(["dbus-run-session", "--", sys.executable, __file__, str(binary), "--session", directory],
-                           env=environment(Path(directory)), check=True)
+        directory = Path(tempfile.mkdtemp(prefix="fluxcast-review-"))
+        try:
+            subprocess.run(["dbus-run-session", "--", sys.executable, __file__, str(binary), "--session", str(directory)],
+                           env=environment(directory), check=True)
+        finally:
+            doc_mount = directory / "doc"
+            for tool in ("fusermount3", "fusermount"):
+                subprocess.run([tool, "-u", "-z", str(doc_mount)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            import shutil
+            shutil.rmtree(directory, ignore_errors=True)

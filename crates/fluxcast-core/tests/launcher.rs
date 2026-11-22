@@ -23,6 +23,8 @@ fn offline_tools_preserve_text_and_convert_in_both_directions() {
     assert_eq!(value("dec 0b1010"), "10");
     assert_eq!(value("ts -1"), "1969-12-31T23:59:59Z");
     assert_eq!(value("ts 1970-01-01T01:00:00+01:00"), "0");
+    assert!(value("ts now").parse::<i64>().unwrap() > 1_700_000_000);
+    assert_eq!(value("HEX 255"), "0xFF");
     for version in [4, 7] {
         let uuid = Uuid::parse_str(&value(&format!("uuid{version}"))).unwrap();
         assert_eq!(uuid.get_version_num(), version);
@@ -41,6 +43,7 @@ fn invalid_input_is_reported_and_application_names_remain_searchable() {
         "= print(1)",
         "ts 9223372036854775807",
         "ts someday",
+        "unb64 ",
         "unb64 /w==",
         "unb64 *",
         "dec 0b21",
@@ -49,9 +52,47 @@ fn invalid_input_is_reported_and_application_names_remain_searchable() {
     ] {
         assert!(evaluate(bad).unwrap().is_err(), "{bad}");
     }
-    for query in ["Firefox", "1Password", "org.kde.Kate", "uuid4 project"] {
+    for query in [
+        "Firefox",
+        "1Password",
+        "org.kde.Kate",
+        "uuid4 project",
+        "hex",
+        "bin",
+        "dec",
+        "ts",
+        "jwt",
+        "b64",
+        "unb64",
+        "2024",
+    ] {
         assert!(evaluate(query).is_none(), "{query}");
     }
+}
+
+#[test]
+fn keyword_search_ranks_name_matches_ahead_of_keyword_matches() {
+    let cat = Catalog::new(vec![
+        Entry::with_keywords(
+            "Konsole".into(),
+            Kind::App,
+            "konsole.desktop".into(),
+            "terminal shell console".into(),
+        ),
+        Entry::new("Terminal".into(), Kind::Project, "Terminal".into()),
+    ]);
+    let names: Vec<_> = cat
+        .search("terminal", None, 10)
+        .into_iter()
+        .map(|i| cat.get(i).unwrap().name.as_str())
+        .collect();
+    assert_eq!(names, ["Terminal", "Konsole"]);
+    let app_only: Vec<_> = cat
+        .search("terminal", Some(Kind::App), 10)
+        .into_iter()
+        .map(|i| cat.get(i).unwrap().name.as_str())
+        .collect();
+    assert_eq!(app_only, ["Konsole"]);
 }
 
 #[test]
