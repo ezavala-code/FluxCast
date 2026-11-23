@@ -8,4 +8,5 @@ local.properties
 .idea/
 apps/desktop/src-tauri/gen/
 apps/android/app/src/main/jniLibs/
+/dist-installers/
 /.cargo/config.toml
